@@ -21,6 +21,13 @@ import copy
 
 from dimod.generators.constraints import combinations
 from hybrid.reference import KerberosSampler
+from typing import List
+
+Matrix = List[List[int]]
+
+# Key takwaways 
+#   - dimod.generators.constraints.combinations, and fix_variable
+#   - Consistent variable naming
 
 
 def get_label(row, col, digit):
@@ -29,7 +36,7 @@ def get_label(row, col, digit):
     """
     return "{row},{col}_{digit}".format(**locals())
 
-def get_matrix(filename):
+def get_matrix(filename: str) -> Matrix:
     """Return a list of lists containing the content of the input text file.
 
     Note: each line of the text file corresponds to a list. Each item in
@@ -48,7 +55,7 @@ def get_matrix(filename):
 
     return lines
 
-def is_correct(matrix):
+def is_correct(matrix: Matrix) -> bool:
     """Verify that the matrix satisfies the Sudoku constraints.
 
     Args:
@@ -57,6 +64,7 @@ def is_correct(matrix):
     """
     n = len(matrix)        # Number of rows/columns
     m = int(math.sqrt(n))  # Number of subsquare rows/columns
+    assert m ** 2 == n  # Will fail if n is not an integer square
     unique_digits = set(range(1, n+1))  # Digits in a solution
 
     # Verifying rows
@@ -91,13 +99,17 @@ def build_bqm(matrix):
     m = int(math.sqrt(n))    # Number of rows/columns in sudoku subsquare
     digits = range(1, n+1)
 
+    # Empty BQM, zero fixed bias
+    # SPIN qubits take {-1, 1} values, seems to work with SPIN too
     bqm = dimod.BinaryQuadraticModel({}, {}, 0.0, dimod.SPIN)
 
     # Constraint: Each node can only select one digit
     for row in range(n):
         for col in range(n):
-            node_digits = [get_label(row, col, digit) for digit in digits]
-            one_digit_bqm = combinations(node_digits, 1)
+            node_digits = [get_label(row, col, digit) for digit in digits]  # All possible assignments for that cell
+            # Mimimize BQM energy when only 1 of node_digits is selected - (sum(x_i) - 1) ^ 2
+            # Seems to work with both SPIN and BINARY
+            one_digit_bqm = combinations(node_digits, 1)  # From dimod constraints, NOT itertools - Only one assignment
             bqm.update(one_digit_bqm)
 
     # Constraint: Each row of nodes cannot have duplicate digits
@@ -149,16 +161,17 @@ def build_bqm(matrix):
                 # with the same 'row' and 'col' will be discouraged from being
                 # selected.
                 bqm.fix_variable(get_label(row, col, value), 1)
-
+    print(bqm)
     return bqm
 
 def solve_sudoku(bqm, matrix):
     """Solve BQM and return matrix with solution."""
     solution = KerberosSampler().sample(bqm,
                                         max_iter=10,
-                                        convergence=3,
+                                        convergence=3,  # Terminates after three iters with no change
                                         qpu_params={'label': 'Example - Sudoku'})
     best_solution = solution.first.sample
+    print(best_solution)
     solution_list = [k for k, v in best_solution.items() if v == 1]
 
     result = copy.deepcopy(matrix)
